@@ -1,0 +1,28 @@
+name: Test Canvas Script
+
+on:
+  workflow_dispatch:   # <-- this enables the "Run workflow" button
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests python-dateutil
+
+      - name: Run Canvas script
+        env:
+          CANVAS_BASE: ${{ secrets.CANVAS_BASE }}
+          CANVAS_TOKEN: ${{ secrets.CANVAS_TOKEN }}
+        run: |
+          python canvas_test.py
