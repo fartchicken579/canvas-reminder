@@ -12,6 +12,7 @@ import os
 
 CANVAS_BASE = os.getenv("CANVAS_BASE")
 CANVAS_TOKEN = os.getenv("CANVAS_TOKEN")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 if not CANVAS_BASE or not CANVAS_TOKEN:
     raise RuntimeError(
@@ -191,6 +192,68 @@ def collect_results():
 
 
 # -----------------------------
+# Discord webhook integration
+# -----------------------------
+
+def _format_percent(record):
+    percent = record.get("percent")
+    if percent is None:
+        return "N/A"
+    return f"{percent:.2f}%"
+
+
+def _format_assignment_line(record):
+    status = record.get("status", "unknown").replace("_", " ")
+    course = record.get("course_name", "Unnamed Course")
+    name = record.get("assignment_name", "Unnamed Assignment")
+    percent = _format_percent(record)
+    url = record.get("url")
+
+    line = f"**{course}** — {name} ({status}, {percent})"
+    if url:
+        line += f" <{url}>"
+    return line
+
+
+def _chunk_lines(lines, max_len=1900):
+    chunks = []
+    current = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1
+        if current and current_len + line_len > max_len:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+
+    return chunks
+
+
+def send_discord_notifications(records):
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    if not records:
+        payloads = [{"content": "✅ No missing or below 50% assignments found."}]
+    else:
+        lines = [_format_assignment_line(r) for r in records]
+        payloads = [{"content": chunk} for chunk in _chunk_lines(lines)]
+
+    for payload in payloads:
+        try:
+            r = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=15)
+            r.raise_for_status()
+        except Exception as e:
+            raise RuntimeError(f"Discord webhook failed: {e}")
+
+
+# -----------------------------
 # CLI (still works, but now prints JSON list)
 # -----------------------------
 
@@ -203,6 +266,7 @@ def main():
 
     # Pretty JSON output for easy piping to other tools
     print(json.dumps(data, indent=2))
+    send_discord_notifications(data)
     return 0
 
 
@@ -259,6 +323,21 @@ class TestFiltering(unittest.TestCase):
             "points_possible": 10,
         }
         self.assertFalse(should_include_assignment(a, self.period_ids, self.ranges))
+
+    def test_format_assignment_line(self):
+        record = {
+            "course_name": "Biology",
+            "assignment_name": "Lab Report",
+            "status": "missing",
+            "percent": None,
+            "url": "https://example.test/assignment",
+        }
+        line = _format_assignment_line(record)
+        self.assertIn("Biology", line)
+        self.assertIn("Lab Report", line)
+        self.assertIn("missing", line)
+        self.assertIn("N/A", line)
+        self.assertIn("https://example.test/assignment", line)
 
 
 if __name__ == "__main__":
